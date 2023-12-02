@@ -16,7 +16,7 @@
 
 #ifdef DEBUG
 const byte stx = 0x32; // (02) Символ начала посылки
-const byte etx = 0x39; // (09) Символ конца посылки
+const byte etx = 0x33; // (03) Символ конца посылки
 // #define ACK 0x36 // (06) Accept from printer
 #else
 const byte stx = 0x02; // (02) Символ начала посылки
@@ -26,10 +26,11 @@ const byte etx = 0x03; // (03) Символ конца посылки
 /////////////////////
 // Declaring Delay`s
 #define SCAN_PERIOD 10   // Delay to scan in millisec. (10ms., 100Hz.)
+#define IND_PERIOD 50    // Delay to update indication (40ms., 25Hz.)
 #define PULSE_PERIOD 400 // Delay to Blink pulse indicator in millisec. (400ms., 2.5Hz.)
 
 static bool wdg_state = HIGH;
-static bool msg_received;
+static bool msg_received = false;
 
 //////////////////////
 // Описание контактов
@@ -37,9 +38,26 @@ static bool msg_received;
 #define RLY 0x07    // реле эмуляции кнопки    | Output
 #define PINBTN 0x05 // Подключена кнопка       | Input
 
+// Набор контактов для подключения сдвиговых регистров индикации
+#define DATA 0x04  // data                    | Output
+#define CLK 0x03   // clock                   | Output
+#define LATCH 0x02 // latch                   | Output
+
+enum enumNodes
+{
+    load,    // B00 000 001
+    empty,   // B00 000 010
+    message, // B00 000 011
+    trn,     // B00 000 100
+    btn,     // B00 000 101
+    rly      // B00 000 110
+};
+static enumNodes currentNode = empty;
+
 OneButton button(PINBTN, true);
 GyverFIFO<byte, 4096> buf;
 
+TimerMs indicationTmr(IND_PERIOD);
 TimerMs buttonTickTmr(SCAN_PERIOD);
 TimerMs receiveTickTmr(SCAN_PERIOD);
 TimerMs pulseTickTmr(PULSE_PERIOD);
@@ -51,6 +69,42 @@ void myDelay(unsigned int x);
 void relayClick();
 void buttonTick();
 void buttonClick();
+
+void sendIndication()
+{
+    byte mod = 0x00;
+    switch (currentNode)
+    {
+    case load:
+        mod = 0b001;
+        break;
+    case empty:
+        mod = 0b010;
+        break;
+    case message:
+        mod = 0b011;
+        break;
+    case trn:
+        mod = 0b100;
+        break;
+    case btn:
+        mod = 0b101;
+        break;
+    case rly:
+        mod = 0b110;
+        break;
+    }
+    digitalWrite(CLK, LOW);
+    digitalWrite(LATCH, LOW);
+    shiftOut(DATA, CLK, MSBFIRST, 0x00);
+    shiftOut(DATA, CLK, MSBFIRST, mod);
+    digitalWrite(LATCH, HIGH);
+}
+
+void indicationTick()
+{
+    sendIndication();
+}
 
 void pulseTick()
 {
@@ -78,12 +132,17 @@ void receiveTick()
         }
     }
     if (val == etx)
+    {
         msg_received = true;
+        currentNode = message;
+    }
+
     receiveTickTmr.start();
 }
 
 void transmit()
 {
+    currentNode = trn;
     while (buf.peek() != etx)
     {
         PRN_SERIAL.write((byte)buf.read());
@@ -104,6 +163,7 @@ void myDelay(unsigned int x)
 
 void relayClick()
 {
+    currentNode = rly;
     myDelay(100);
     digitalWrite(RLY, false);
     myDelay(150);
@@ -119,6 +179,7 @@ void buttonTick()
 void buttonClick()
 {
     buttonTickTmr.stop();
+    currentNode = btn;
     if (msg_received)
         transmit();
     relayClick();
@@ -136,11 +197,17 @@ void setup()
     pinMode(WDG, OUTPUT);
     pinMode(RLY, OUTPUT);
     pinMode(PINBTN, INPUT_PULLUP);
+    pinMode(DATA, OUTPUT);
+    pinMode(CLK, OUTPUT);
+    pinMode(LATCH, OUTPUT);
     digitalWrite(RLY, HIGH);
     button.attachClick(buttonClick);
 
     buttonTickTmr.attach(*buttonTick);
     buttonTickTmr.start();
+
+    indicationTmr.attach(*indicationTick);
+    indicationTmr.start();
 
     pulseTickTmr.attach(*pulseTick);
     pulseTickTmr.start();
@@ -152,6 +219,7 @@ void loop()
 {
     while (true)
     {
+        indicationTmr.tick();
         receiveTickTmr.tick();
         buttonTickTmr.tick();
         pulseTickTmr.tick();
