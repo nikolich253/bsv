@@ -4,7 +4,7 @@
 #include <OneButton.h>
 
 ////////////////Configuration////////////////
-// #define DEBUG
+#define DEBUG
 
 #ifdef DEBUG
 #define BSV_SERIAL Serial
@@ -44,10 +44,13 @@ TimerMs buttonTickTmr(SCAN_PERIOD);
 TimerMs receiveTickTmr(SCAN_PERIOD);
 TimerMs pulseTickTmr(PULSE_PERIOD);
 
-void buttonTick()
-{
-    button.tick();
-}
+void pulseTick();
+void receiveTick();
+void transmit();
+void myDelay(unsigned int x);
+void relayClick();
+void buttonTick();
+void buttonClick();
 
 void pulseTick()
 {
@@ -87,7 +90,7 @@ void transmit()
     }
     PRN_SERIAL.write((byte)buf.read());
 #ifdef DEBUG
-    PRN_SERIAL.println(" ");
+    PRN_SERIAL.println("#");
 #endif
 }
 
@@ -107,7 +110,12 @@ void relayClick()
     digitalWrite(RLY, true);
 }
 
-// Нажата педаль
+// Сканирование нажатия педали
+void buttonTick()
+{
+    button.tick();
+}
+// Обработка нажатия педали
 void buttonClick()
 {
     buttonTickTmr.stop();
