@@ -4,7 +4,7 @@
 #include <OneButton.h>
 
 ////////////////Configuration////////////////
-#define DEBUG
+// #define DEBUG
 
 #ifdef DEBUG
 #define BSV_SERIAL Serial
@@ -53,6 +53,8 @@ enum enumNodes
     rly      // B00 000 110
 };
 static enumNodes currentNode = empty;
+static enumNodes prevNode = empty;
+static byte event = 0x1;
 
 OneButton button(PINBTN, true);
 GyverFIFO<byte, 4096> buf;
@@ -72,6 +74,13 @@ void buttonClick();
 
 void sendIndication()
 {
+    indicationTmr.stop();
+    if (prevNode == currentNode)
+        return;
+    prevNode = currentNode;
+    event = event << 1;
+    if (event == 0b10000)
+        event = 0x1;
     byte mod = 0x00;
     switch (currentNode)
     {
@@ -96,9 +105,10 @@ void sendIndication()
     }
     digitalWrite(CLK, LOW);
     digitalWrite(LATCH, LOW);
-    shiftOut(DATA, CLK, MSBFIRST, 0x00);
+    shiftOut(DATA, CLK, MSBFIRST, event);
     shiftOut(DATA, CLK, MSBFIRST, mod);
     digitalWrite(LATCH, HIGH);
+    indicationTmr.start();
 }
 
 void indicationTick()
@@ -126,6 +136,7 @@ void receiveTick()
         case stx:
             buf.clear();
             msg_received = false;
+            currentNode = empty;
         default:
             buf.write(val);
             break;
