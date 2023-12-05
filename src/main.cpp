@@ -29,19 +29,19 @@ const byte etx = 0x03; // (03) Символ конца посылки
 #define IND_PERIOD 50    // Delay to update indication (40ms., 25Hz.)
 #define PULSE_PERIOD 400 // Delay to Blink pulse indicator in millisec. (400ms., 2.5Hz.)
 
-static bool wdg_state = HIGH;
+static byte wdg_state = 0x00;
 static bool msg_received = false;
 
 //////////////////////
 // Описание контактов
+// Набор контактов для подключения сдвиговых регистров индикации
+#define LATCH 0x02 // latch                   | Output
+#define CLK 0x03   // clock                   | Output
+#define DATA 0x04  // data                    | Output
+
+#define PINBTN 0x05 // Подключена кнопка       | Input
 #define WDG 0x0D    // Индикация работы (WATCHDOG) (pin 13)
 #define RLY 0x07    // реле эмуляции кнопки    | Output
-#define PINBTN 0x05 // Подключена кнопка       | Input
-
-// Набор контактов для подключения сдвиговых регистров индикации
-#define DATA 0x04  // data                    | Output
-#define CLK 0x03   // clock                   | Output
-#define LATCH 0x02 // latch                   | Output
 
 enum enumNodes
 {
@@ -64,6 +64,8 @@ TimerMs buttonTickTmr(SCAN_PERIOD);
 TimerMs receiveTickTmr(SCAN_PERIOD);
 TimerMs pulseTickTmr(PULSE_PERIOD);
 
+void sendIndication();
+void indicationTick();
 void pulseTick();
 void receiveTick();
 void transmit();
@@ -79,7 +81,7 @@ void sendIndication()
         return;
     prevNode = currentNode;
     event = event << 1;
-    if (event == 0b10000)
+    if (event == 0x10)
         event = 0x1;
     byte mod = 0x00;
     switch (currentNode)
@@ -118,7 +120,7 @@ void indicationTick()
 
 void pulseTick()
 {
-    wdg_state = !wdg_state;
+    wdg_state ^= 0x01;
     digitalWrite(WDG, wdg_state);
 }
 
@@ -176,9 +178,9 @@ void relayClick()
 {
     currentNode = rly;
     myDelay(100);
-    digitalWrite(RLY, false);
+    digitalWrite(RLY, LOW);
     myDelay(150);
-    digitalWrite(RLY, true);
+    digitalWrite(RLY, HIGH);
 }
 
 // Сканирование нажатия педали
