@@ -1,10 +1,12 @@
 #include <Arduino.h>
+#include <GyverButton.h>
+#include <GyverTimer.h>
 #include <GyverFIFO.h>
-#include <TimerMs.h>
-#include <OneButton.h>
+// #include <TimerMs.h>
+// #include <OneButton.h>
 
 ////////////////Configuration////////////////
-#define DEBUG
+// #define DEBUG
 
 #ifdef DEBUG
 #define BSV_SERIAL Serial
@@ -20,13 +22,11 @@ const byte etx = 0x03; // (03) Символ конца посылки
 
 /////////////////////
 // Declaring Delay`s
-#define SCAN_PERIOD 10   // Delay to scan in millisec. (10ms., 100Hz.)
-#define IND_PERIOD 40    // Delay to update indication (40ms., 25Hz.)
-#define PULSE_PERIOD 400 // Delay to Blink pulse indicator in millisec. (400ms., 2.5Hz.)
-#define TIMEOUT 8000     // Timeout for direct transmit message (8000ms., 8s.)
+#define SCAN_PERIOD 10 // Delay to scan in millisec. (10ms., 100Hz.)
+#define IND_PERIOD 40  // Delay to update indication (40ms., 25Hz.)
+#define TIMEOUT 10000  // Timeout for direct transmit message (8000ms., 8s.)
 
-static byte wdg_state = 0x00;
-static bool msg_received = false;
+// static byte wdg_state = 0x00;
 
 //////////////////////
 // Описание контактов
@@ -41,46 +41,38 @@ static bool msg_received = false;
 
 enum enumNodes
 {
-    load,    // B00 000 001
-    empty,   // B00 000 010
-    message, // B00 000 011
-    trn,     // B00 000 100
-    btn,     // B00 000 101
-    rly      // B00 000 110
+    load,    // B00 000 001 Рестарт Ардуино или сработал таймаут 10 секунд
+    empty,   // B00 000 010 Сообщение отсутствует
+    message, // B00 000 011 Сообщение принято
+    trn,     // B00 000 100 Сообщение отправлено
+    btn,     // B00 000 101 Педаль нажата
+    rly      // B00 000 110 Реле сработало
 };
-static enumNodes currentNode = empty;
-static enumNodes prevNode = load;
+static enumNodes currentNode = load;
 static byte event = 0x0;
 static bool newEvent = false;
-static bool firstLoop = true;
+static bool firstLoop = false;
+static bool button_enabled = true;
+static bool msg_received = false;
 
-OneButton button(PINBTN, true);
-GyverFIFO<byte, 4096> buf;
+GButton button(PINBTN);
+GyverFIFO<byte, 2048> buf;
 
-TimerMs indicationTmr(IND_PERIOD);
-TimerMs buttonTickTmr(SCAN_PERIOD);
-TimerMs receiveTickTmr(SCAN_PERIOD);
-TimerMs pulseTickTmr(PULSE_PERIOD);
-TimerMs timeoutTmr(TIMEOUT, true);
+GTimer indicationTmr(MS);
+GTimer receiveTmr(MS);
+GTimer timeoutTmr(MS);
 
 void sendIndication();
-void indicationTick();
-void pulseTick();
-void receiveTick();
+void receive();
 void transmit();
 void timeoutHandle();
 void myDelay(unsigned int x);
 void relayClick();
-void buttonTick();
 void buttonClick();
 
 void sendIndication()
 {
-    if (prevNode == currentNode && !newEvent)
-        return;
-    indicationTmr.stop();
     newEvent = false;
-    prevNode = currentNode;
     event = event << 1;
     if (event == 0x0)
         event++;
@@ -108,28 +100,21 @@ void sendIndication()
         mod = 0b110;
         break;
     }
+    PRN_SERIAL.print(currentNode);
+    PRN_SERIAL.println(event);
     digitalWrite(CLK, LOW);
     digitalWrite(LATCH, LOW);
     shiftOut(DATA, CLK, MSBFIRST, event);
     shiftOut(DATA, CLK, MSBFIRST, mod);
     digitalWrite(LATCH, HIGH);
-    indicationTmr.start();
 }
 
-void indicationTick()
+void receive()
 {
-    sendIndication();
-}
-
-void pulseTick()
-{
-    wdg_state ^= 0x01;
-    digitalWrite(WDG, wdg_state);
-}
-
-void receiveTick()
-{
-    receiveTickTmr.stop();
+    if (!BSV_SERIAL.available())
+        return;
+    receiveTmr.stop();
+    timeoutTmr.stop();
     byte val = 0x00;
     while (BSV_SERIAL.available())
     {
@@ -139,6 +124,7 @@ void receiveTick()
             buf.clear();
             msg_received = false;
             currentNode = empty;
+            newEvent = true;
         }
         buf.write(val);
     }
@@ -146,17 +132,21 @@ void receiveTick()
     {
         msg_received = true;
         currentNode = message;
-        timeoutTmr.start();
+        newEvent = true;
     }
-    if (firstLoop && msg_received)
+    if (firstLoop)
         transmit();
-    receiveTickTmr.start();
+
+    timeoutTmr.start();
+    receiveTmr.start();
 }
 
 void transmit()
 {
+    msg_received = false;
+    firstLoop = false;
     currentNode = trn;
-
+    newEvent = true;
     while (buf.available())
     {
         PRN_SERIAL.write((byte)buf.read());
@@ -164,6 +154,17 @@ void transmit()
 #ifdef DEBUG
     PRN_SERIAL.println("#");
 #endif
+}
+
+void timeoutHandle()
+{
+    // PRN_SERIAL.println("TimeOut Handler");
+    timeoutTmr.stop();
+    firstLoop = true;
+    if (msg_received)
+        transmit();
+    currentNode = load;
+    newEvent = true;
 }
 
 void myDelay(unsigned int x)
@@ -184,27 +185,22 @@ void relayClick()
     digitalWrite(RLY, HIGH);
 }
 
-void timeoutHandle()
-{
-    firstLoop = true;
-}
-
-// Сканирование нажатия педали
-void buttonTick()
-{
-    button.tick();
-}
 // Обработка нажатия педали
 void buttonClick()
 {
-    buttonTickTmr.stop();
+    button_enabled = false;
+    timeoutTmr.stop();
+    receiveTmr.stop();
+
     currentNode = btn;
+    newEvent = true;
+
     if (msg_received)
-    {
         transmit();
-    }
     relayClick();
-    buttonTickTmr.start();
+    button.resetStates();
+    button_enabled = true;
+    receiveTmr.start();
 }
 
 void setup()
@@ -216,37 +212,42 @@ void setup()
     BSV_SERIAL.begin(9600); // Connect to BSV  (Module Read)
     PRN_SERIAL.begin(9600); // Connect to Printer (Module Transmit & ACCEPT)
 #endif
-    pinMode(WDG, OUTPUT);
-    pinMode(RLY, OUTPUT);
-    pinMode(PINBTN, INPUT_PULLUP);
+
     pinMode(DATA, OUTPUT);
     pinMode(CLK, OUTPUT);
     pinMode(LATCH, OUTPUT);
+
+    pinMode(WDG, OUTPUT);
+    pinMode(PINBTN, INPUT_PULLUP);
+    pinMode(RLY, OUTPUT);
     digitalWrite(RLY, HIGH);
-    button.attachClick(buttonClick);
 
-    buttonTickTmr.attach(*buttonTick);
-    buttonTickTmr.start();
+    // Настраиваем кнопку
+    button.setTickMode(AUTO);
 
-    timeoutTmr.attach(*timeoutHandle);
+    receiveTmr.setInterval(SCAN_PERIOD);
+    indicationTmr.setInterval(IND_PERIOD);
 
-    sendIndication();
-    indicationTmr.attach(*indicationTick);
-    indicationTmr.start();
+    timeoutTmr.setMode(TIMER_TIMEOUT);
+    timeoutTmr.setInterval(TIMEOUT);
 
-    pulseTickTmr.attach(*pulseTick);
-    pulseTickTmr.start();
-    receiveTickTmr.attach(*receiveTick);
-    receiveTickTmr.start();
+    newEvent = true;
 }
 
 void loop()
 {
     while (true)
     {
-        indicationTmr.tick();
-        receiveTickTmr.tick();
-        buttonTickTmr.tick();
-        pulseTickTmr.tick();
+        if (button_enabled && button.isClick())
+            buttonClick();
+
+        if (receiveTmr.isReady())
+            receive();
+
+        if (timeoutTmr.isReady())
+            timeoutHandle();
+
+        if (newEvent && indicationTmr.isReady())
+            sendIndication();
     }
 }
