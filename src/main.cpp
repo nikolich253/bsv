@@ -100,8 +100,8 @@ void sendIndication()
         mod = 0b110;
         break;
     }
-    PRN_SERIAL.print(currentNode);
-    PRN_SERIAL.println(event);
+    BSV_SERIAL.print(currentNode);
+    BSV_SERIAL.println(event);
     digitalWrite(CLK, LOW);
     digitalWrite(LATCH, LOW);
     shiftOut(DATA, CLK, MSBFIRST, event);
@@ -150,6 +150,8 @@ void transmit()
     while (buf.available())
     {
         PRN_SERIAL.write((byte)buf.read());
+        if (buf.peek() == etx)
+            break;
     }
 #ifdef DEBUG
     PRN_SERIAL.println("#");
@@ -222,9 +224,6 @@ void setup()
     pinMode(RLY, OUTPUT);
     digitalWrite(RLY, HIGH);
 
-    // Настраиваем кнопку
-    button.setTickMode(AUTO);
-
     receiveTmr.setInterval(SCAN_PERIOD);
     indicationTmr.setInterval(IND_PERIOD);
 
@@ -238,7 +237,10 @@ void loop()
 {
     while (true)
     {
-        if (button_enabled && button.isClick())
+        if (button_enabled)
+            button.tick();
+        
+        if (button.isClick())
             buttonClick();
 
         if (receiveTmr.isReady())
