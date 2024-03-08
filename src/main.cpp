@@ -63,7 +63,7 @@ GTimer receiveTmr(MS);
 GTimer timeoutTmr(MS);
 
 void sendIndication();
-void receive();
+void msg_receive();
 void transmit();
 void timeoutHandle();
 void myDelay(unsigned int x);
@@ -109,7 +109,7 @@ void sendIndication()
     digitalWrite(LATCH, HIGH);
 }
 
-void receive()
+void msg_receive()
 {
     if (!BSV_SERIAL.available())
         return;
@@ -239,12 +239,12 @@ void loop()
     {
         if (button_enabled)
             button.tick();
-        
+
         if (button.isClick())
             buttonClick();
 
         if (receiveTmr.isReady())
-            receive();
+            msg_receive();
 
         if (timeoutTmr.isReady())
             timeoutHandle();
